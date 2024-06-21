@@ -1,0 +1,234 @@
+import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.io.*;
+import java.time.LocalDate;
+import java.time.YearMonth;
+import java.util.HashMap;
+import java.util.Map;
+
+class DailySchedule implements Serializable {
+    private String[] tasks;
+
+    public DailySchedule() {
+        tasks = new String[24];
+    }
+
+    public String[] getTasks() {
+        return tasks;
+    }
+
+    public void setTask(int hour, String task) {
+        tasks[hour] = task;
+    }
+}
+
+class CalendarScheduler {
+    private JFrame frame;
+    private JLabel monthLabel;
+    private JTable calendarTable;
+    private DefaultTableModel calendarTableModel;
+    private JTable scheduleTable;
+    private DefaultTableModel scheduleTableModel;
+    private Map<LocalDate, DailySchedule> scheduleData;
+
+    private static final String FILE_PATH = "D:\\CalendarData\\schedule_data.ser";
+
+    public static void main(String[] args) {
+        try {
+            UIManager.setLookAndFeel("javax.swing.plaf.nimbus.NimbusLookAndFeel");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        SwingUtilities.invokeLater(CalendarScheduler::new);
+    }
+
+    public CalendarScheduler() {
+        scheduleData = loadDataFromFile();
+
+        frame = new JFrame("Calendar Scheduler");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(800, 600);
+        frame.setLayout(new BorderLayout());
+
+        JPanel topPanel = new JPanel(new BorderLayout());
+        monthLabel = new JLabel("", JLabel.CENTER);
+        JButton prevButton = new JButton("<");
+        prevButton.addActionListener(e -> updateMonth(-1));
+        JButton nextButton = new JButton(">");
+        nextButton.addActionListener(e -> updateMonth(1));
+
+        topPanel.add(prevButton, BorderLayout.WEST);
+        topPanel.add(monthLabel, BorderLayout.CENTER);
+        topPanel.add(nextButton, BorderLayout.EAST);
+
+        calendarTableModel = new DefaultTableModel(null, new String[]{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"});
+        calendarTable = new JTable(calendarTableModel);
+        calendarTable.setCellSelectionEnabled(true);
+        calendarTable.setColumnSelectionAllowed(true);
+        calendarTable.setRowHeight(50);
+        calendarTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        calendarTable.setFillsViewportHeight(true);
+        calendarTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                int row = calendarTable.rowAtPoint(evt.getPoint());
+                int col = calendarTable.columnAtPoint(evt.getPoint());
+                if (row >= 0 && col >= 0) {
+                    Object value = calendarTable.getValueAt(row, col);
+                    if (value != null && !value.toString().isEmpty()) {
+                        int day = (int) value;
+                        LocalDate selectedDate = LocalDate.of(YearMonth.now().getYear(), YearMonth.now().getMonthValue(), day);
+                        updateSchedule(selectedDate);
+                    }
+                }
+            }
+        });
+
+        JScrollPane calendarScrollPane = new JScrollPane(calendarTable);
+        calendarScrollPane.setPreferredSize(new Dimension(800, 200));
+
+        scheduleTableModel = new DefaultTableModel(24, 2);
+        scheduleTableModel.setColumnIdentifiers(new String[]{"Time", "Task"});
+        scheduleTable = new JTable(scheduleTableModel) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false; // 禁止编辑单元格内容
+            }
+        };
+        scheduleTable.getColumnModel().getColumn(0).setMaxWidth(80);
+
+        JScrollPane scheduleScrollPane = new JScrollPane(scheduleTable);
+        scheduleScrollPane.setPreferredSize(new Dimension(800, 400));
+
+        JButton addTaskButton = new JButton("Add Task");
+        addTaskButton.addActionListener(e -> {
+            String time = (String) scheduleTableModel.getValueAt(scheduleTable.getSelectedRow(), 0);
+            String task = JOptionPane.showInputDialog(frame, "Enter task for " + time);
+            if (task != null) {
+                int selectedRow = scheduleTable.getSelectedRow();
+                scheduleTableModel.setValueAt(task, selectedRow, 1);
+                LocalDate selectedDate = getSelectedDateFromCalendar();
+                int hour = selectedRow;
+                scheduleData.computeIfAbsent(selectedDate, k -> new DailySchedule()).setTask(hour, task);
+                saveDataToFile(scheduleData);
+            }
+        });
+
+        JButton fillTasksButton = new JButton("Fill Tasks");
+        fillTasksButton.addActionListener(e -> {
+            String taskToFill = JOptionPane.showInputDialog(frame, "Enter task to fill selected time range:");
+            if (taskToFill != null && !taskToFill.isEmpty()) {
+                int startRow = scheduleTable.getSelectedRow();
+                int endRow = scheduleTable.getSelectionModel().getMaxSelectionIndex();
+
+                if (startRow >= 0 && endRow >= startRow) {
+                    LocalDate selectedDate = getSelectedDateFromCalendar();
+
+                    for (int hour = startRow; hour <= endRow; hour++) {
+                        scheduleTableModel.setValueAt(taskToFill, hour, 1);
+                        scheduleData.computeIfAbsent(selectedDate, k -> new DailySchedule()).setTask(hour, taskToFill);
+                    }
+
+                    saveDataToFile(scheduleData);
+                } else {
+                    JOptionPane.showMessageDialog(frame, "Please select a valid time range in the schedule.");
+                }
+            }
+        });
+
+        JButton clearTasksButton = new JButton("Clear Tasks");
+        clearTasksButton.addActionListener(e -> clearTasks());
+
+        JPanel buttonPanel = new JPanel();
+        buttonPanel.add(addTaskButton);
+        buttonPanel.add(fillTasksButton);
+        buttonPanel.add(clearTasksButton);
+
+        frame.add(topPanel, BorderLayout.NORTH);
+        frame.add(calendarScrollPane, BorderLayout.CENTER);
+        frame.add(scheduleScrollPane, BorderLayout.SOUTH);
+        frame.add(buttonPanel, BorderLayout.EAST);
+
+        updateCalendar(YearMonth.now());
+
+        frame.setVisible(true);
+    }
+
+    private void updateMonth(int monthDelta) {
+        YearMonth currentYearMonth = YearMonth.now();
+        YearMonth updatedYearMonth = currentYearMonth.plusMonths(monthDelta);
+        updateCalendar(updatedYearMonth);
+    }
+
+    private void updateCalendar(YearMonth yearMonth) {
+        monthLabel.setText(yearMonth.getMonth().toString() + " " + yearMonth.getYear());
+
+        calendarTableModel.setRowCount(0);
+        int firstDayOfWeek = yearMonth.atDay(1).getDayOfWeek().getValue() % 7;
+        int daysInMonth = yearMonth.lengthOfMonth();
+        int day = 1;
+
+        for (int i = 0; i < 6; i++) {
+            Object[] rowData = new Object[7];
+            for (int j = 0; j < 7; j++) {
+                if (i == 0 && j < firstDayOfWeek) {
+                    rowData[j] = "";
+                } else if (day <= daysInMonth) {
+                    rowData[j] = day++;
+                } else {
+                    rowData[j] = "";
+                }
+            }
+            calendarTableModel.addRow(rowData);
+        }
+    }
+
+    private void updateSchedule(LocalDate date) {
+        scheduleTableModel.getDataVector().removeAllElements();
+        scheduleTableModel.fireTableDataChanged();
+
+        String[] tasks = scheduleData.getOrDefault(date, new DailySchedule()).getTasks();
+        for (int hour = 0; hour < 24; hour++) {
+            scheduleTableModel.addRow(new Object[]{String.format("%02d:00 - %02d:00", hour, hour + 1), tasks[hour]});
+        }
+    }
+
+    private LocalDate getSelectedDateFromCalendar() {
+        int row = calendarTable.getSelectedRow();
+        int col = calendarTable.getSelectedColumn();
+        int day = (int) calendarTableModel.getValueAt(row, col);
+        return LocalDate.of(YearMonth.now().getYear(), YearMonth.now().getMonthValue(), day);
+    }
+
+    private void saveDataToFile(Map<LocalDate, DailySchedule> scheduleData) {
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(FILE_PATH))) {
+            oos.writeObject(scheduleData);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private Map<LocalDate, DailySchedule> loadDataFromFile() {
+        File file = new File(FILE_PATH);
+        if (file.exists()) {
+            try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(file))) {
+                return (Map<LocalDate, DailySchedule>) ois.readObject();
+            } catch (IOException | ClassNotFoundException e) {
+                e.printStackTrace();
+            }
+        }
+        return new HashMap<>();
+    }
+
+    private void clearTasks() {
+        LocalDate selectedDate = getSelectedDateFromCalendar();
+        DailySchedule schedule = scheduleData.get(selectedDate);
+        if (schedule != null) {
+            for (int i = 0; i < schedule.getTasks().length; i++) {
+                schedule.setTask(i, null);
+            }
+            updateSchedule(selectedDate);
+            saveDataToFile(scheduleData);
+        }
+    }
+}
