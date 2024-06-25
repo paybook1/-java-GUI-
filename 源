@@ -1,39 +1,70 @@
+import javax.imageio.ImageIO;
 import javax.swing.*;
+import javax.swing.event.TableModelEvent;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.io.*;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.HashMap;
 import java.util.Map;
 
+// 定义每日日程类
 class DailySchedule implements Serializable {
-    private String[] tasks;
+    private String[] tasks; // 每小时的任务
+    private Map<Integer, byte[]> images; // 每小时的图像
 
+    // 构造方法，初始化任务和图像
     public DailySchedule() {
         tasks = new String[24];
+        images = new HashMap<>();
     }
 
+    // 获取任务
     public String[] getTasks() {
         return tasks;
     }
 
+    // 设置任务
     public void setTask(int hour, String task) {
         tasks[hour] = task;
     }
+
+    // 获取图像
+    public byte[] getImage(int hour) {
+        return images.get(hour);
+    }
+
+    // 设置图像
+    public void setImage(int hour, byte[] image) {
+        images.put(hour, image);
+    }
+
+    // 获取所有图像
+    public Map<Integer, byte[]> getImages() {
+        return images;
+    }
 }
 
+// 日历调度程序类
 class CalendarScheduler {
-    private JFrame frame;
-    private JLabel monthLabel;
-    private JTable calendarTable;
-    private DefaultTableModel calendarTableModel;
-    private JTable scheduleTable;
-    private DefaultTableModel scheduleTableModel;
-    private Map<LocalDate, DailySchedule> scheduleData;
+    private JFrame frame; // 主框架
+    private JLabel monthLabel; // 显示月份的标签
+    private JTable calendarTable; // 日历表
+    private DefaultTableModel calendarTableModel; // 日历表模型
+    private JTable scheduleTable; // 日程表
+    private DefaultTableModel scheduleTableModel; // 日程表模型
+    private Map<LocalDate, DailySchedule> scheduleData; // 日程数据
+    private YearMonth displayedYearMonth; // 当前显示的年月
 
-    private static final String FILE_PATH = "D:\\CalendarData\\schedule_data.ser";
+    private static final String DIRECTORY_PATH = "CalendarData";
+    private static final String FILE_NAME = "schedule_data.ser";
+    private static final String FILE_PATH = DIRECTORY_PATH + File.separator + FILE_NAME;
 
+    // 程序入口，设置外观并启动应用程序
     public static void main(String[] args) {
         try {
             UIManager.setLookAndFeel("javax.swing.plaf.nimbus.NimbusLookAndFeel");
@@ -43,25 +74,36 @@ class CalendarScheduler {
         SwingUtilities.invokeLater(CalendarScheduler::new);
     }
 
+    // 构造方法，初始化界面和数据
     public CalendarScheduler() {
-        scheduleData = loadDataFromFile();
+        ensureDirectoryExists(DIRECTORY_PATH); // 确保数据目录存在
+        scheduleData = loadDataFromFile(); // 从文件加载数据
+        displayedYearMonth = YearMonth.now(); // 获取当前年月
 
+        // 初始化主框架
         frame = new JFrame("Calendar Scheduler");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setSize(800, 600);
-        frame.setLayout(new BorderLayout());
+        frame.setSize(1000, 700);
+        frame.setLayout(new BorderLayout(10, 10));
 
+        // 创建顶部面板，包含月份标签和导航按钮
         JPanel topPanel = new JPanel(new BorderLayout());
+        topPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         monthLabel = new JLabel("", JLabel.CENTER);
+        monthLabel.setFont(new Font("Serif", Font.BOLD, 24));
         JButton prevButton = new JButton("<");
+        prevButton.setFont(new Font("Serif", Font.BOLD, 18));
         prevButton.addActionListener(e -> updateMonth(-1));
         JButton nextButton = new JButton(">");
+        nextButton.setFont(new Font("Serif", Font.BOLD, 18));
         nextButton.addActionListener(e -> updateMonth(1));
 
+        // 将组件添加到顶部面板
         topPanel.add(prevButton, BorderLayout.WEST);
         topPanel.add(monthLabel, BorderLayout.CENTER);
         topPanel.add(nextButton, BorderLayout.EAST);
 
+        // 初始化日历表模型和表格
         calendarTableModel = new DefaultTableModel(null, new String[]{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"});
         calendarTable = new JTable(calendarTableModel);
         calendarTable.setCellSelectionEnabled(true);
@@ -69,52 +111,123 @@ class CalendarScheduler {
         calendarTable.setRowHeight(50);
         calendarTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         calendarTable.setFillsViewportHeight(true);
-        calendarTable.addMouseListener(new java.awt.event.MouseAdapter() {
-            public void mouseClicked(java.awt.event.MouseEvent evt) {
+        calendarTable.setFont(new Font("Serif", Font.PLAIN, 18));
+        calendarTable.getTableHeader().setFont(new Font("Serif", Font.BOLD, 18));
+
+        // 添加鼠标点击事件监听器
+        calendarTable.addMouseListener(new MouseAdapter() {
+            public void mouseClicked(MouseEvent evt) {
                 int row = calendarTable.rowAtPoint(evt.getPoint());
                 int col = calendarTable.columnAtPoint(evt.getPoint());
                 if (row >= 0 && col >= 0) {
                     Object value = calendarTable.getValueAt(row, col);
                     if (value != null && !value.toString().isEmpty()) {
                         int day = (int) value;
-                        LocalDate selectedDate = LocalDate.of(YearMonth.now().getYear(), YearMonth.now().getMonthValue(), day);
+                        LocalDate selectedDate = LocalDate.of(displayedYearMonth.getYear(), displayedYearMonth.getMonthValue(), day);
                         updateSchedule(selectedDate);
                     }
                 }
             }
         });
 
+        // 将日历表放入滚动面板
         JScrollPane calendarScrollPane = new JScrollPane(calendarTable);
-        calendarScrollPane.setPreferredSize(new Dimension(800, 200));
+        calendarScrollPane.setPreferredSize(new Dimension(1000, 300));
 
-        scheduleTableModel = new DefaultTableModel(24, 2);
-        scheduleTableModel.setColumnIdentifiers(new String[]{"Time", "Task"});
+        // 初始化日程表模型和表格
+        scheduleTableModel = new DefaultTableModel(24, 4) {
+            @Override
+            public Class<?> getColumnClass(int columnIndex) {
+                return columnIndex == 2 ? ImageIcon.class : String.class;
+            }
+
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return column == 1 || column == 2;
+            }
+        };
+        scheduleTableModel.setColumnIdentifiers(new String[]{"Time", "Task", "Image", "View"});
         scheduleTable = new JTable(scheduleTableModel) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return false; // 禁止编辑单元格内容
+                return column == 1 || column == 2;
             }
         };
-        scheduleTable.getColumnModel().getColumn(0).setMaxWidth(80);
 
-        JScrollPane scheduleScrollPane = new JScrollPane(scheduleTable);
-        scheduleScrollPane.setPreferredSize(new Dimension(800, 400));
+        // 设置日程表的列宽和行高
+        scheduleTable.getColumnModel().getColumn(0).setPreferredWidth(150); // 加宽时间栏
+        scheduleTable.getColumnModel().getColumn(0).setMaxWidth(200); // 设置时间栏的最大宽度
+        scheduleTable.setRowHeight(30);
+        scheduleTable.setFont(new Font("Serif", Font.PLAIN, 18));
+        scheduleTable.getTableHeader().setFont(new Font("Serif", Font.BOLD, 18));
 
-        JButton addTaskButton = new JButton("Add Task");
-        addTaskButton.addActionListener(e -> {
-            String time = (String) scheduleTableModel.getValueAt(scheduleTable.getSelectedRow(), 0);
-            String task = JOptionPane.showInputDialog(frame, "Enter task for " + time);
-            if (task != null) {
-                int selectedRow = scheduleTable.getSelectedRow();
-                scheduleTableModel.setValueAt(task, selectedRow, 1);
-                LocalDate selectedDate = getSelectedDateFromCalendar();
-                int hour = selectedRow;
-                scheduleData.computeIfAbsent(selectedDate, k -> new DailySchedule()).setTask(hour, task);
-                saveDataToFile(scheduleData);
+        // 设置单元格渲染器
+        scheduleTable.setDefaultRenderer(Object.class, new TaskCellRenderer());
+
+        // 添加鼠标点击事件监听器
+        scheduleTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                int row = scheduleTable.rowAtPoint(e.getPoint());
+                int column = scheduleTable.columnAtPoint(e.getPoint());
+                if (column == 3) {
+                    viewImage(row);
+                }
             }
         });
 
+        // 将日程表放入滚动面板
+        JScrollPane scheduleScrollPane = new JScrollPane(scheduleTable);
+        scheduleScrollPane.setPreferredSize(new Dimension(1000, 400));
+
+        // 创建添加任务按钮
+        JButton addTaskButton = new JButton("Add Task");
+        addTaskButton.setFont(new Font("Serif", Font.BOLD, 18));
+        addTaskButton.addActionListener(e -> {
+            int selectedRow = scheduleTable.getSelectedRow();
+            if (selectedRow != -1) {
+                String time = (String) scheduleTableModel.getValueAt(selectedRow, 0);
+                String task = JOptionPane.showInputDialog(frame, "Enter task for " + time);
+                if (task != null) {
+                    scheduleTableModel.setValueAt(task, selectedRow, 1);
+                    LocalDate selectedDate = getSelectedDateFromCalendar();
+                    int hour = selectedRow;
+                    scheduleData.computeIfAbsent(selectedDate, k -> new DailySchedule()).setTask(hour, task);
+                    saveDataToFile(scheduleData);
+                }
+            }
+        });
+
+        // 创建添加图像按钮
+        JButton addImageButton = new JButton("Add Image");
+        addImageButton.setFont(new Font("Serif", Font.BOLD, 18));
+        addImageButton.addActionListener(e -> {
+            int selectedRow = scheduleTable.getSelectedRow();
+            if (selectedRow != -1) {
+                JFileChooser fileChooser = new JFileChooser();
+                int returnValue = fileChooser.showOpenDialog(frame);
+                if (returnValue == JFileChooser.APPROVE_OPTION) {
+                    File selectedFile = fileChooser.getSelectedFile();
+                    try {
+                        byte[] imageData = getImageBytes(selectedFile);
+                        ImageIcon imageIcon = new ImageIcon(imageData);
+                        Image scaledImage = imageIcon.getImage().getScaledInstance(50, 50, Image.SCALE_SMOOTH);
+                        imageIcon = new ImageIcon(scaledImage);
+                        scheduleTableModel.setValueAt(imageIcon, selectedRow, 2);
+
+                        LocalDate selectedDate = getSelectedDateFromCalendar();
+                        int hour = selectedRow;
+                        scheduleData.computeIfAbsent(selectedDate, k -> new DailySchedule()).setImage(hour, imageData);
+                        saveDataToFile(scheduleData);
+                    } catch (IOException ioException) {
+                        ioException.printStackTrace();                    }
+                }
+            }
+        });
+
+        // 创建填充任务按钮
         JButton fillTasksButton = new JButton("Fill Tasks");
+        fillTasksButton.setFont(new Font("Serif", Font.BOLD, 18));
         fillTasksButton.addActionListener(e -> {
             String taskToFill = JOptionPane.showInputDialog(frame, "Enter task to fill selected time range:");
             if (taskToFill != null && !taskToFill.isEmpty()) {
@@ -136,30 +249,75 @@ class CalendarScheduler {
             }
         });
 
+        // 创建清除任务按钮
         JButton clearTasksButton = new JButton("Clear Tasks");
-        clearTasksButton.addActionListener(e -> clearTasks());
+        clearTasksButton.setFont(new Font("Serif", Font.BOLD, 18));
+        clearTasksButton.addActionListener(e -> {
+            int result = JOptionPane.showConfirmDialog(frame, "Are you sure you want to clear all tasks and images for the selected day?", "Confirm Clear", JOptionPane.YES_NO_OPTION);
+            if (result == JOptionPane.YES_OPTION) {
+                clearTasks();
+            }
+        });
 
+        // 创建合并单元格按钮
+        JButton mergeCellsButton = new JButton("Merge Cells");
+        mergeCellsButton.setFont(new Font("Serif", Font.BOLD, 18));
+        mergeCellsButton.addActionListener(e -> {
+            int[] selectedRows = scheduleTable.getSelectedRows();
+            if (selectedRows.length > 1) {
+                String mergedTask = JOptionPane.showInputDialog(frame, "Enter task for the merged cells:");
+                if (mergedTask != null) {
+                    LocalDate selectedDate = getSelectedDateFromCalendar();
+                    DailySchedule dailySchedule = scheduleData.computeIfAbsent(selectedDate, k -> new DailySchedule());
+                    for (int row : selectedRows) {
+                        scheduleTableModel.setValueAt("", row, 1); // Clear individual cells
+                        dailySchedule.setTask(row, "");
+                    }
+                    scheduleTableModel.setValueAt(mergedTask, selectedRows[0], 1); // Set task in the first cell
+                    dailySchedule.setTask(selectedRows[0], mergedTask); // Save merged task to data
+                    saveDataToFile(scheduleData);
+                }
+            } else {
+                JOptionPane.showMessageDialog(frame, "Please select multiple cells to merge.");
+            }
+        });
+
+        // 创建按钮面板，包含各个功能按钮
         JPanel buttonPanel = new JPanel();
+        buttonPanel.setLayout(new BoxLayout(buttonPanel, BoxLayout.Y_AXIS));
+        buttonPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        buttonPanel.add(Box.createVerticalGlue());
         buttonPanel.add(addTaskButton);
+        buttonPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+        buttonPanel.add(addImageButton);
+        buttonPanel.add(Box.createRigidArea(new Dimension(0, 10)));
         buttonPanel.add(fillTasksButton);
+        buttonPanel.add(Box.createRigidArea(new Dimension(0, 10)));
         buttonPanel.add(clearTasksButton);
+        buttonPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+        buttonPanel.add(mergeCellsButton);
+        buttonPanel.add(Box.createVerticalGlue());
 
+        // 将顶部面板、日历表、日程表和按钮面板添加到主框架
         frame.add(topPanel, BorderLayout.NORTH);
         frame.add(calendarScrollPane, BorderLayout.CENTER);
         frame.add(scheduleScrollPane, BorderLayout.SOUTH);
         frame.add(buttonPanel, BorderLayout.EAST);
 
-        updateCalendar(YearMonth.now());
+        // 更新日历显示当前年月
+        updateCalendar(displayedYearMonth);
 
+        // 设置主框架可见
         frame.setVisible(true);
     }
 
+    // 更新月份方法
     private void updateMonth(int monthDelta) {
-        YearMonth currentYearMonth = YearMonth.now();
-        YearMonth updatedYearMonth = currentYearMonth.plusMonths(monthDelta);
-        updateCalendar(updatedYearMonth);
+        displayedYearMonth = displayedYearMonth.plusMonths(monthDelta);
+        updateCalendar(displayedYearMonth);
     }
 
+    // 更新日历显示方法
     private void updateCalendar(YearMonth yearMonth) {
         monthLabel.setText(yearMonth.getMonth().toString() + " " + yearMonth.getYear());
 
@@ -183,23 +341,36 @@ class CalendarScheduler {
         }
     }
 
+    // 更新日程表显示方法
     private void updateSchedule(LocalDate date) {
         scheduleTableModel.getDataVector().removeAllElements();
         scheduleTableModel.fireTableDataChanged();
 
         String[] tasks = scheduleData.getOrDefault(date, new DailySchedule()).getTasks();
+        Map<Integer, byte[]> images = scheduleData.getOrDefault(date, new DailySchedule()).getImages();
+
         for (int hour = 0; hour < 24; hour++) {
-            scheduleTableModel.addRow(new Object[]{String.format("%02d:00 - %02d:00", hour, hour + 1), tasks[hour]});
+            ImageIcon imageIcon = null;
+            byte[] imageData = images.get(hour);
+            if (imageData != null) {
+                imageIcon = new ImageIcon(imageData);
+                Image scaledImage = imageIcon.getImage().getScaledInstance(50, 50, Image.SCALE_SMOOTH);
+                imageIcon = new ImageIcon(scaledImage);
+            }
+            scheduleTableModel.addRow(new Object[]{String.format("%02d:00 - %02d:00", hour, hour + 1), tasks[hour], imageIcon, "View"});
+            scheduleTable.setRowHeight(hour, 30); // Reset row height
         }
     }
 
+    // 从日历表获取选择的日期
     private LocalDate getSelectedDateFromCalendar() {
         int row = calendarTable.getSelectedRow();
         int col = calendarTable.getSelectedColumn();
         int day = (int) calendarTableModel.getValueAt(row, col);
-        return LocalDate.of(YearMonth.now().getYear(), YearMonth.now().getMonthValue(), day);
+        return LocalDate.of(displayedYearMonth.getYear(), displayedYearMonth.getMonthValue(), day);
     }
 
+    // 将日程数据保存到文件
     private void saveDataToFile(Map<LocalDate, DailySchedule> scheduleData) {
         try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(FILE_PATH))) {
             oos.writeObject(scheduleData);
@@ -208,6 +379,7 @@ class CalendarScheduler {
         }
     }
 
+    // 从文件加载日程数据
     private Map<LocalDate, DailySchedule> loadDataFromFile() {
         File file = new File(FILE_PATH);
         if (file.exists()) {
@@ -220,15 +392,70 @@ class CalendarScheduler {
         return new HashMap<>();
     }
 
+    // 清除选定日期的所有任务和图像
     private void clearTasks() {
         LocalDate selectedDate = getSelectedDateFromCalendar();
         DailySchedule schedule = scheduleData.get(selectedDate);
         if (schedule != null) {
             for (int i = 0; i < schedule.getTasks().length; i++) {
                 schedule.setTask(i, null);
+                schedule.setImage(i, null);
             }
             updateSchedule(selectedDate);
             saveDataToFile(scheduleData);
         }
     }
+
+    // 确保目录存在，如果不存在则创建
+    private void ensureDirectoryExists(String directoryPath) {
+        File directory = new File(directoryPath);
+        if (!directory.exists()) {
+            directory.mkdirs();
+        }
+    }
+
+    // 将文件转换为字节数组
+    private byte[] getImageBytes(File file) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        ImageIO.write(ImageIO.read(file), "jpg", baos);
+        return baos.toByteArray();
+    }
+
+    // 查看选定行的图像
+    private void viewImage(int row) {
+        LocalDate selectedDate = getSelectedDateFromCalendar();
+        DailySchedule dailySchedule = scheduleData.get(selectedDate);
+        if (dailySchedule != null) {
+            byte[] imageData = dailySchedule.getImage(row);
+            if (imageData != null) {
+                ImageIcon imageIcon = new ImageIcon(imageData);
+                Image image = imageIcon.getImage();
+                Image scaledImage = image.getScaledInstance(400, 400, Image.SCALE_SMOOTH);
+                ImageIcon scaledImageIcon = new ImageIcon(scaledImage);
+                JLabel imageLabel = new JLabel(scaledImageIcon);
+                JOptionPane.showMessageDialog(frame, imageLabel, "Image Viewer", JOptionPane.PLAIN_MESSAGE);
+            } else {
+                JOptionPane.showMessageDialog(frame, "No image available for the selected time.");
+            }
+        }
+    }
+
+    // 自定义任务单元格渲染器，支持图像和文本
+    class TaskCellRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+            Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            if (value instanceof ImageIcon) {
+                JLabel label = new JLabel((ImageIcon) value);
+                label.setHorizontalAlignment(JLabel.CENTER);
+                label.setVerticalAlignment(JLabel.CENTER);
+                return label;
+            } else {
+                return c;
+            }
+        }
+    }
 }
+
+
+
